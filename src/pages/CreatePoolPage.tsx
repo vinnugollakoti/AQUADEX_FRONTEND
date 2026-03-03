@@ -25,6 +25,50 @@ export function CreatePoolPage() {
 
   const coinA = useMemo(() => COIN_BY_TYPE[coinAType], [coinAType])
   const coinB = useMemo(() => COIN_BY_TYPE[coinBType], [coinBType])
+  const balanceARaw = useMemo(() => BigInt(balances[coinAType] ?? '0'), [balances, coinAType])
+  const balanceBRaw = useMemo(() => BigInt(balances[coinBType] ?? '0'), [balances, coinBType])
+
+  const amountARaw = useMemo(() => {
+    try {
+      return amountA.trim() ? parseAmountToBaseUnits(amountA, coinA.decimals) : null
+    } catch {
+      return null
+    }
+  }, [amountA, coinA.decimals])
+
+  const amountBRaw = useMemo(() => {
+    try {
+      return amountB.trim() ? parseAmountToBaseUnits(amountB, coinB.decimals) : null
+    } catch {
+      return null
+    }
+  }, [amountB, coinB.decimals])
+  const hasAnyAmount = Boolean(amountA.trim() || amountB.trim())
+  const hasBothAmounts = Boolean(amountA.trim() && amountB.trim())
+
+  const addValidation = useMemo(() => {
+    if (!account?.address) return hasAnyAmount ? 'Connect wallet first.' : ''
+    if (coinAType === coinBType) return 'Coin A and Coin B must be different.'
+    if (!amountA.trim() || !amountB.trim()) return hasAnyAmount ? 'Enter both token amounts.' : ''
+    if (amountARaw === null || amountBRaw === null) return 'Enter valid token amounts.'
+    if (amountARaw <= 0n || amountBRaw <= 0n) return 'Amounts must be greater than zero.'
+    if (amountARaw > balanceARaw) return `Insufficient ${coinA.symbol} balance.`
+    if (amountBRaw > balanceBRaw) return `Insufficient ${coinB.symbol} balance.`
+    return ''
+  }, [
+    account?.address,
+    amountA,
+    amountARaw,
+    amountB,
+    amountBRaw,
+    balanceARaw,
+    balanceBRaw,
+    hasAnyAmount,
+    coinA.symbol,
+    coinAType,
+    coinB.symbol,
+    coinBType,
+  ])
 
   useEffect(() => {
     const loadBalances = async () => {
@@ -63,9 +107,12 @@ export function CreatePoolPage() {
       if (coinAType === coinBType) {
         throw new Error('Coin A and Coin B must be different.')
       }
+      if (addValidation) {
+        throw new Error(addValidation)
+      }
 
-      const amountABase = parseAmountToBaseUnits(amountA, coinA.decimals)
-      const amountBBase = parseAmountToBaseUnits(amountB, coinB.decimals)
+      const amountABase = amountARaw as bigint
+      const amountBBase = amountBRaw as bigint
 
       const [coinObjectsA, coinObjectsB] = await Promise.all([
         coinAType === SUI_COIN_TYPE
@@ -221,7 +268,12 @@ export function CreatePoolPage() {
         </div>
 
         <div className="create-action-wrap">
-          <button type="submit" className="btn btn-primary full-width-btn create-pool-btn" disabled={isSubmitting}>
+          {addValidation ? <p className="validation-line">{addValidation}</p> : null}
+          <button
+            type="submit"
+            className="btn btn-primary full-width-btn create-pool-btn"
+            disabled={isSubmitting || !hasBothAmounts || coinAType === coinBType || !account?.address || Boolean(addValidation)}
+          >
             {isSubmitting ? 'Creating Pool...' : 'Create Pool'}
           </button>
         </div>
