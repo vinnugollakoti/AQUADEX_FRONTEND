@@ -246,6 +246,40 @@ export function SwapPage() {
 
   const fromCoin = COIN_BY_TYPE[fromType]
   const toCoin = COIN_BY_TYPE[toType]
+  const fromBalanceRaw = useMemo(() => BigInt(balances[fromType] ?? '0'), [balances, fromType])
+
+  const amountInRawInput = useMemo(() => {
+    if (!fromCoin || !amountIn.trim()) return null
+    try {
+      return parseAmountToBaseUnits(amountIn, fromCoin.decimals)
+    } catch {
+      return null
+    }
+  }, [amountIn, fromCoin])
+  const hasSwapAmount = Boolean(amountIn.trim())
+
+  const swapValidation = useMemo(() => {
+    if (!account?.address) return hasSwapAmount ? 'Connect wallet first.' : ''
+    if (!selectedPool) return 'No pool found for selected pair.'
+    if (fromType === toType) return 'Choose two different coins.'
+    if (!amountIn.trim()) return hasSwapAmount ? 'Enter swap amount.' : ''
+    if (!fromCoin || !toCoin || !quote || amountInRawInput === null) return 'Enter a valid swap amount.'
+    if (amountInRawInput <= 0n) return 'Swap amount must be greater than zero.'
+    if (amountInRawInput > fromBalanceRaw) return `Insufficient ${fromCoin.symbol} balance.`
+    return ''
+  }, [
+    account?.address,
+    amountIn,
+    amountInRawInput,
+    fromBalanceRaw,
+    fromCoin,
+    fromType,
+    hasSwapAmount,
+    quote,
+    selectedPool,
+    toCoin,
+    toType,
+  ])
 
   const derivedPrice = useMemo(() => {
     if (!quote || !fromCoin || !toCoin) return null
@@ -264,6 +298,9 @@ export function SwapPage() {
       }
       if (!selectedPool || !quote || !fromCoin || !toCoin) {
         throw new Error('Select a valid pool pair and amount.')
+      }
+      if (swapValidation) {
+        throw new Error(swapValidation)
       }
 
       const coinObjects =
@@ -417,11 +454,12 @@ export function SwapPage() {
         ) : null}
 
         {!selectedPool ? <p className="status-line">No pool found for selected pair.</p> : null}
+        {swapValidation ? <p className="validation-line">{swapValidation}</p> : null}
 
         <button
           className="btn btn-primary full-width-btn"
           type="submit"
-          disabled={submitting || !selectedPool || !quote || fromType === toType}
+          disabled={submitting || !hasSwapAmount || Boolean(swapValidation)}
         >
           {submitting ? 'Swapping...' : 'Swap'}
         </button>

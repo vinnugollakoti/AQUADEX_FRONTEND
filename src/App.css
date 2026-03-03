@@ -416,6 +416,12 @@ main {
   color: #b5d5d1;
 }
 
+.validation-line {
+  margin: 0.25rem 0 0.65rem;
+  color: #ff9f9f;
+  font-size: 0.88rem;
+}
+
 .status-link {
   margin-top: 0.35rem;
   display: inline-block;

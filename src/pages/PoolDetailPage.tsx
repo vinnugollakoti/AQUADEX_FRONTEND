@@ -105,6 +105,14 @@ export function PoolDetailPage() {
 
   const coinA = pool?.coinA
   const coinB = pool?.coinB
+  const poolCoinABalanceRaw = useMemo(
+    () => BigInt(pool ? (balances[pool.coinAType] ?? '0') : '0'),
+    [balances, pool],
+  )
+  const poolCoinBBalanceRaw = useMemo(
+    () => BigInt(pool ? (balances[pool.coinBType] ?? '0') : '0'),
+    [balances, pool],
+  )
 
   useEffect(() => {
     const load = async () => {
@@ -292,6 +300,49 @@ export function PoolDetailPage() {
     }
   }, [coinA, coinB, pool, selectedPosition])
 
+  const addAmountARaw = useMemo(() => {
+    if (!coinA || !amountA.trim()) return null
+    try {
+      return parseAmountToBaseUnits(amountA, coinA.decimals)
+    } catch {
+      return null
+    }
+  }, [amountA, coinA])
+
+  const addAmountBRaw = useMemo(() => {
+    if (!coinB || !amountB.trim()) return null
+    try {
+      return parseAmountToBaseUnits(amountB, coinB.decimals)
+    } catch {
+      return null
+    }
+  }, [amountB, coinB])
+  const hasAnyAddAmount = Boolean(amountA.trim() || amountB.trim())
+  const hasBothAddAmounts = Boolean(amountA.trim() && amountB.trim())
+
+  const addLiquidityValidation = useMemo(() => {
+    if (!pool || !coinA || !coinB) return 'Pool is loading.'
+    if (!account?.address) return hasAnyAddAmount ? 'Connect wallet first.' : ''
+    if (!amountA.trim() || !amountB.trim()) return hasAnyAddAmount ? 'Enter both token amounts.' : ''
+    if (addAmountARaw === null || addAmountBRaw === null) return 'Enter valid token amounts.'
+    if (addAmountARaw <= 0n || addAmountBRaw <= 0n) return 'Amounts must be greater than zero.'
+    if (addAmountARaw > poolCoinABalanceRaw) return `Insufficient ${coinA.symbol} balance.`
+    if (addAmountBRaw > poolCoinBBalanceRaw) return `Insufficient ${coinB.symbol} balance.`
+    return ''
+  }, [
+    account?.address,
+    addAmountARaw,
+    addAmountBRaw,
+    amountA,
+    amountB,
+    coinA,
+    coinB,
+    hasAnyAddAmount,
+    pool,
+    poolCoinABalanceRaw,
+    poolCoinBBalanceRaw,
+  ])
+
   const onAddLiquidity = async (event: React.FormEvent) => {
     event.preventDefault()
 
@@ -299,9 +350,12 @@ export function PoolDetailPage() {
       if (!pool || !account?.address || !coinA || !coinB) {
         throw new Error('Connect wallet and load pool first.')
       }
+      if (addLiquidityValidation) {
+        throw new Error(addLiquidityValidation)
+      }
 
-      const amountARaw = parseAmountToBaseUnits(amountA, coinA.decimals)
-      const amountBRaw = parseAmountToBaseUnits(amountB, coinB.decimals)
+      const amountARaw = addAmountARaw as bigint
+      const amountBRaw = addAmountBRaw as bigint
 
       const [coinObjectsA, coinObjectsB] = await Promise.all([
         pool.coinAType === SUI_COIN_TYPE
@@ -611,7 +665,12 @@ export function PoolDetailPage() {
               </p>
               <p>Adding liquidity mints/updates your LP position NFT on success.</p>
             </div>
-            <button className="btn btn-primary full-width-btn" type="submit" disabled={submitting}>
+            {addLiquidityValidation ? <p className="validation-line">{addLiquidityValidation}</p> : null}
+            <button
+              className="btn btn-primary full-width-btn"
+              type="submit"
+              disabled={submitting || !hasBothAddAmounts || Boolean(addLiquidityValidation)}
+            >
               {submitting ? 'Processing...' : 'Add Liquidity'}
             </button>
           </form>
