@@ -28,6 +28,14 @@ type PoolRow = {
 const POOL_CREATED_EVENT = `${PACKAGE_ID}::events::PoolCreatedEvent`
 const SWAP_EVENT = `${PACKAGE_ID}::events::SwapEvent`
 
+function formatTokenCompact(valueRaw: bigint, decimals: number): string {
+  const normalized = toDecimalNumber(valueRaw, decimals)
+  if (normalized >= 1000) {
+    return formatCompactNumber(normalized)
+  }
+  return formatBaseUnits(valueRaw, decimals, 4)
+}
+
 async function fetchEventsByType(client: ReturnType<typeof useSuiClient>, moveEventType: string) {
   const events: Array<{ parsedJson?: unknown; timestampMs?: string | null }> = []
   let cursor: { txDigest: string; eventSeq: string } | null = null
@@ -260,8 +268,8 @@ export function PoolsPage() {
                 const coinALabel = row.coinA?.symbol ?? shortTypeName(row.coinAType)
                 const coinBLabel = row.coinB?.symbol ?? shortTypeName(row.coinBType)
 
-                const reserveA = row.coinA ? formatBaseUnits(row.reserveARaw, row.coinA.decimals, 4) : '-'
-                const reserveB = row.coinB ? formatBaseUnits(row.reserveBRaw, row.coinB.decimals, 4) : '-'
+                const reserveA = row.coinA ? formatTokenCompact(row.reserveARaw, row.coinA.decimals) : '-'
+                const reserveB = row.coinB ? formatTokenCompact(row.reserveBRaw, row.coinB.decimals) : '-'
 
                 return (
                   <tr key={row.poolId}>
@@ -290,7 +298,7 @@ export function PoolsPage() {
                     <td>
                       {reserveA} {coinALabel} + {reserveB} {coinBLabel}
                     </td>
-                    <td>{row.volume24h.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                    <td>{row.volume24h >= 1000 ? formatCompactNumber(row.volume24h) : row.volume24h.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
                     <td>
                       <Link to={`/pools/${row.poolId}`} className="manage-btn">
                         Manage

@@ -105,6 +105,7 @@ export function SwapPage() {
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [txDigest, setTxDigest] = useState('')
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
 
   useEffect(() => {
     const load = async () => {
@@ -296,6 +297,7 @@ export function SwapPage() {
 
       setFeedback('Swap executed successfully.')
       setTxDigest(result.digest)
+      setShowSuccessModal(true)
       setAmountIn('')
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Swap failed.')
@@ -307,6 +309,15 @@ export function SwapPage() {
   const onFlip = () => {
     setFromType(toType)
     setToType(fromType)
+  }
+
+  const fillAmountFromBalance = (mode: 'quarter' | 'half' | 'max') => {
+    if (!fromCoin) return
+    const raw = BigInt(balances[fromType] ?? '0')
+    let filledRaw = raw
+    if (mode === 'half') filledRaw = raw / 2n
+    if (mode === 'quarter') filledRaw = raw / 4n
+    setAmountIn(formatBaseUnits(filledRaw, fromCoin.decimals, fromCoin.decimals))
   }
 
   if (loading) {
@@ -322,13 +333,16 @@ export function SwapPage() {
       <form className="swap-card" onSubmit={onSwap}>
         <div className="swap-token-row">
           <label>From</label>
-          <select value={fromType} onChange={(e) => setFromType(e.target.value)}>
-            {availableCoinTypes.map((type) => {
-              const coin = COIN_BY_TYPE[type]
-              const label = coin?.symbol ?? shortTypeName(type)
-              return <option key={type} value={type}>{label}</option>
-            })}
-          </select>
+          <div className="swap-select-wrap">
+            {fromCoin?.logoUrl ? <img src={fromCoin.logoUrl} alt={`${fromCoin.symbol} logo`} className="swap-token-logo" /> : null}
+            <select value={fromType} onChange={(e) => setFromType(e.target.value)}>
+              {availableCoinTypes.map((type) => {
+                const coin = COIN_BY_TYPE[type]
+                const label = coin?.symbol ?? shortTypeName(type)
+                return <option key={type} value={type}>{label}</option>
+              })}
+            </select>
+          </div>
         </div>
 
         <div className="swap-amount-row">
@@ -345,58 +359,64 @@ export function SwapPage() {
               : '0'}
           </span>
         </div>
+        <div className="quick-actions">
+          <button type="button" onClick={() => fillAmountFromBalance('quarter')}>QUARTER</button>
+          <button type="button" onClick={() => fillAmountFromBalance('half')}>HALF</button>
+          <button type="button" onClick={() => fillAmountFromBalance('max')}>MAX</button>
+        </div>
 
         <button type="button" className="swap-flip" onClick={onFlip}>⇅</button>
 
         <div className="swap-token-row">
           <label>To</label>
-          <select value={toType} onChange={(e) => setToType(e.target.value)}>
-            {availableCoinTypes.map((type) => {
-              const coin = COIN_BY_TYPE[type]
-              const label = coin?.symbol ?? shortTypeName(type)
-              return <option key={type} value={type}>{label}</option>
-            })}
-          </select>
-        </div>
-
-        <div className="swap-out-row">
-          <p>Estimated Output</p>
-          <strong>
-            {quote && toCoin ? `${formatBaseUnits(quote.amountOutRaw, toCoin.decimals, 6)} ${toCoin.symbol}` : '-'}
-          </strong>
-        </div>
-
-        <div className="swap-meta-grid">
-          <label>
-            Slippage %
-            <input value={slippage} onChange={(e) => setSlippage(e.target.value)} inputMode="decimal" />
-          </label>
-          <div className="swap-meta-box">
-            <p>Min Received</p>
-            <strong>
-              {quote && toCoin ? `${formatBaseUnits(quote.minOutRaw, toCoin.decimals, 6)} ${toCoin.symbol}` : '-'}
-            </strong>
+          <div className="swap-select-wrap">
+            {toCoin?.logoUrl ? <img src={toCoin.logoUrl} alt={`${toCoin.symbol} logo`} className="swap-token-logo" /> : null}
+            <select value={toType} onChange={(e) => setToType(e.target.value)}>
+              {availableCoinTypes.map((type) => {
+                const coin = COIN_BY_TYPE[type]
+                const label = coin?.symbol ?? shortTypeName(type)
+                return <option key={type} value={type}>{label}</option>
+              })}
+            </select>
           </div>
         </div>
 
-        <div className="swap-prices">
-          <p>
-            Derived price:{' '}
-            {derivedPrice && fromCoin && toCoin
-              ? `1 ${fromCoin.symbol} ≈ ${derivedPrice.toFixed(8)} ${toCoin.symbol}`
-              : '-'}
-          </p>
-          <p>
-            pool::get_price (A/B raw): {onchainPriceRaw !== null ? onchainPriceRaw.toString() : '-'}
-          </p>
-          {selectedPool ? (
-            <a className="status-link" href={suiscObjectUrl(selectedPool.id)} target="_blank" rel="noreferrer">
-              Selected Pool: {selectedPool.id.slice(0, 12)}...
-            </a>
-          ) : (
-            <p className="status-line">No pool found for selected pair.</p>
-          )}
-        </div>
+        {quote && toCoin ? (
+          <>
+            <div className="swap-out-row">
+              <p>Estimated Output</p>
+              <strong>{`${formatBaseUnits(quote.amountOutRaw, toCoin.decimals, 6)} ${toCoin.symbol}`}</strong>
+            </div>
+
+            <div className="swap-meta-grid">
+              <label>
+                Slippage %
+                <input value={slippage} onChange={(e) => setSlippage(e.target.value)} inputMode="decimal" />
+              </label>
+              <div className="swap-meta-box">
+                <p>Min Received</p>
+                <strong>{`${formatBaseUnits(quote.minOutRaw, toCoin.decimals, 6)} ${toCoin.symbol}`}</strong>
+              </div>
+            </div>
+
+            <div className="swap-prices">
+              <p>
+                Derived price:{' '}
+                {derivedPrice && fromCoin && toCoin
+                  ? `1 ${fromCoin.symbol} ≈ ${derivedPrice.toFixed(8)} ${toCoin.symbol}`
+                  : '-'}
+              </p>
+              <p>pool::get_price (A/B raw): {onchainPriceRaw !== null ? onchainPriceRaw.toString() : '-'}</p>
+              {selectedPool ? (
+                <a className="status-link" href={suiscObjectUrl(selectedPool.id)} target="_blank" rel="noreferrer">
+                  Selected Pool: {selectedPool.id.slice(0, 12)}...
+                </a>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+
+        {!selectedPool ? <p className="status-line">No pool found for selected pair.</p> : null}
 
         <button
           className="btn btn-primary full-width-btn"
@@ -412,6 +432,25 @@ export function SwapPage() {
         <a className="status-link" href={suiscTxUrl(txDigest)} target="_blank" rel="noreferrer">
           View transaction on SuiScan
         </a>
+      ) : null}
+
+      {showSuccessModal && txDigest ? (
+        <div className="swap-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="swap-modal">
+            <h3>Successfully swapped using AquaDex AMM</h3>
+            <p>Your swap has been executed on-chain.</p>
+            <a href={suiscTxUrl(txDigest)} target="_blank" rel="noreferrer" className="swap-modal-link">
+              <img
+                src="https://suiscan.xyz/static/media/SuiFullLogoDark.410a358de5292b64a837b53bba29463f.svg"
+                alt="SuiScan"
+              />
+              <span>View your transaction on-chain</span>
+            </a>
+            <button type="button" className="btn btn-ghost full-width-btn" onClick={() => setShowSuccessModal(false)}>
+              Close
+            </button>
+          </div>
+        </div>
       ) : null}
     </section>
   )

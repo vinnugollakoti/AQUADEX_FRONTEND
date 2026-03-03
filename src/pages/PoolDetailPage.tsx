@@ -344,6 +344,42 @@ export function PoolDetailPage() {
     }
   }
 
+  const autoFillCoinBFromCoinA = (nextAmountA: string) => {
+    if (!pool || !coinA || !coinB) return
+    if (!nextAmountA.trim()) {
+      setAmountB('')
+      return
+    }
+    if (pool.reserveARaw <= 0n || pool.reserveBRaw <= 0n) return
+    if (!/^\d*(\.\d*)?$/.test(nextAmountA.trim())) return
+
+    try {
+      const amountARaw = parseAmountToBaseUnits(nextAmountA, coinA.decimals)
+      const amountBRaw = (amountARaw * pool.reserveBRaw) / pool.reserveARaw
+      setAmountB(formatBaseUnits(amountBRaw, coinB.decimals, coinB.decimals))
+    } catch {
+      // Allow user typing intermediate values without hard errors.
+    }
+  }
+
+  const autoFillCoinAFromCoinB = (nextAmountB: string) => {
+    if (!pool || !coinA || !coinB) return
+    if (!nextAmountB.trim()) {
+      setAmountA('')
+      return
+    }
+    if (pool.reserveARaw <= 0n || pool.reserveBRaw <= 0n) return
+    if (!/^\d*(\.\d*)?$/.test(nextAmountB.trim())) return
+
+    try {
+      const amountBRaw = parseAmountToBaseUnits(nextAmountB, coinB.decimals)
+      const amountARaw = (amountBRaw * pool.reserveARaw) / pool.reserveBRaw
+      setAmountA(formatBaseUnits(amountARaw, coinA.decimals, coinA.decimals))
+    } catch {
+      // Allow user typing intermediate values without hard errors.
+    }
+  }
+
   const onRemoveLiquidity = async (event: React.FormEvent) => {
     event.preventDefault()
 
@@ -425,8 +461,13 @@ export function PoolDetailPage() {
     const decimals = coin === 'a' ? coinA.decimals : coinB.decimals
     const raw = BigInt(balances[coinType] ?? '0')
     const filled = formatBaseUnits(fractionOf(raw, mode), decimals, decimals)
-    if (coin === 'a') setAmountA(filled)
-    else setAmountB(filled)
+    if (coin === 'a') {
+      setAmountA(filled)
+      autoFillCoinBFromCoinA(filled)
+    } else {
+      setAmountB(filled)
+      autoFillCoinAFromCoinB(filled)
+    }
   }
 
   const fillRemoveAmount = (coin: 'a' | 'b', mode: 'quarter' | 'half' | 'max') => {
@@ -525,7 +566,11 @@ export function PoolDetailPage() {
             <div className="amount-input-row">
               <input
                 value={amountA}
-                onChange={(e) => setAmountA(e.target.value)}
+                onChange={(e) => {
+                  const nextValue = e.target.value
+                  setAmountA(nextValue)
+                  autoFillCoinBFromCoinA(nextValue)
+                }}
                 placeholder={`Amount ${coinALabel}`}
                 inputMode="decimal"
               />
@@ -535,14 +580,18 @@ export function PoolDetailPage() {
               </span>
             </div>
             <div className="quick-actions">
-              <button type="button" onClick={() => fillAddAmount('a', 'quarter')}>QUARTER</button>
-              <button type="button" onClick={() => fillAddAmount('a', 'half')}>HALF</button>
-              <button type="button" onClick={() => fillAddAmount('a', 'max')}>MAX</button>
+              <button type="button" onClick={() => { fillAddAmount('a', 'quarter') }}>QUARTER</button>
+              <button type="button" onClick={() => { fillAddAmount('a', 'half') }}>HALF</button>
+              <button type="button" onClick={() => { fillAddAmount('a', 'max') }}>MAX</button>
             </div>
             <div className="amount-input-row">
               <input
                 value={amountB}
-                onChange={(e) => setAmountB(e.target.value)}
+                onChange={(e) => {
+                  const nextValue = e.target.value
+                  setAmountB(nextValue)
+                  autoFillCoinAFromCoinB(nextValue)
+                }}
                 placeholder={`Amount ${coinBLabel}`}
                 inputMode="decimal"
               />

@@ -362,6 +362,39 @@ main {
   font-size: 0.9rem;
 }
 
+.create-action-wrap {
+  grid-column: span 12;
+}
+
+.create-pool-btn {
+  box-shadow: 0 16px 34px rgba(49, 210, 193, 0.28);
+  font-size: 1.03rem;
+  padding-top: 0.84rem;
+  padding-bottom: 0.84rem;
+}
+
+.pool-suiscan-link {
+  margin-top: 0.7rem;
+  border: 1px solid rgba(117, 133, 146, 0.35);
+  border-radius: 10px;
+  background: rgba(19, 25, 31, 0.85);
+  padding: 0.58rem 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+}
+
+.pool-suiscan-link img {
+  width: 88px;
+  height: auto;
+}
+
+.pool-suiscan-link span {
+  color: #b9c8d3;
+  font-size: 0.9rem;
+}
+
 .status-line {
   margin-top: 1rem;
   color: #b5d5d1;
@@ -896,6 +929,7 @@ main {
 
 .swap-page {
   max-width: 640px;
+  margin: 0 auto;
 }
 
 .swap-card {
@@ -926,6 +960,24 @@ main {
   border: 1px solid #2f3a41;
   border-radius: 10px;
   padding: 0.62rem 0.65rem;
+}
+
+.swap-select-wrap {
+  position: relative;
+}
+
+.swap-token-logo {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+}
+
+.swap-select-wrap select {
+  padding-left: 38px;
 }
 
 .swap-amount-row {
@@ -1027,4 +1079,56 @@ main {
   .swap-meta-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.swap-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(3, 4, 6, 0.75);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.swap-modal {
+  width: min(460px, 100%);
+  background: rgba(12, 15, 18, 0.98);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.swap-modal h3 {
+  margin: 0;
+}
+
+.swap-modal p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.swap-modal-link {
+  border: 1px solid rgba(117, 133, 146, 0.35);
+  border-radius: 10px;
+  background: rgba(19, 25, 31, 0.85);
+  padding: 0.55rem 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+}
+
+.swap-modal-link img {
+  width: 88px;
+  height: auto;
+}
+
+.swap-modal-link span {
+  color: #b9c8d3;
+  font-size: 0.9rem;
 }
