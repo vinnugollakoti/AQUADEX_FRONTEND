@@ -2,8 +2,8 @@ import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@
 import { useEffect, useMemo, useState } from 'react'
 import { Transaction } from '@mysten/sui/transactions'
 import { COINS, COIN_BY_TYPE, SUI_COIN_TYPE } from '../constants/coins'
-import { NETWORK_CHAIN, PACKAGE_ID, suiscTxUrl } from '../constants/sui'
-import { formatBalance, parseAmountToBaseUnits } from '../utils/amounts'
+import { NETWORK_CHAIN, PACKAGE_ID, suiscObjectUrl, suiscTxUrl } from '../constants/sui'
+import { formatBalance, formatBaseUnits, parseAmountToBaseUnits } from '../utils/amounts'
 import { buildCoinInput, getAllCoinsByType } from '../utils/txCoins'
 
 type BalanceByType = Record<string, string>
@@ -21,6 +21,7 @@ export function CreatePoolPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [feedback, setFeedback] = useState<string>('')
   const [txDigest, setTxDigest] = useState('')
+  const [createdPoolId, setCreatedPoolId] = useState('')
 
   const coinA = useMemo(() => COIN_BY_TYPE[coinAType], [coinAType])
   const coinB = useMemo(() => COIN_BY_TYPE[coinBType], [coinBType])
@@ -54,6 +55,7 @@ export function CreatePoolPage() {
     try {
       setFeedback('')
       setTxDigest('')
+      setCreatedPoolId('')
 
       if (!account?.address) {
         throw new Error('Connect wallet first.')
@@ -108,11 +110,35 @@ export function CreatePoolPage() {
         }),
       )
       setBalances(Object.fromEntries(refreshed))
+
+      const txResult = await client.getTransactionBlock({
+        digest: result.digest,
+        options: { showEvents: true },
+      })
+      const createdEvent = txResult.events?.find(
+        (evt) => evt.type === `${PACKAGE_ID}::events::PoolCreatedEvent`,
+      )
+      const poolId = (createdEvent?.parsedJson as { pool_id?: string } | undefined)?.pool_id
+      if (poolId) {
+        setCreatedPoolId(poolId)
+      }
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Failed to create pool.')
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const fillAmount = (coin: 'a' | 'b', mode: 'quarter' | 'half' | 'max') => {
+    const coinType = coin === 'a' ? coinAType : coinBType
+    const decimals = coin === 'a' ? coinA.decimals : coinB.decimals
+    const raw = BigInt(balances[coinType] ?? '0')
+    let nextRaw = raw
+    if (mode === 'half') nextRaw = raw / 2n
+    if (mode === 'quarter') nextRaw = raw / 4n
+    const nextAmount = formatBaseUnits(nextRaw, decimals, decimals)
+    if (coin === 'a') setAmountA(nextAmount)
+    else setAmountB(nextAmount)
   }
 
   return (
@@ -140,15 +166,23 @@ export function CreatePoolPage() {
               <span>{coinA.name}</span>
             </div>
           </div>
-          <p className="balance-text">
-            Balance: {formatBalance(balances[coinAType] ?? '0', coinA.decimals)} {coinA.symbol}
-          </p>
-          <input
-            value={amountA}
-            onChange={(e) => setAmountA(e.target.value)}
-            placeholder={`Amount in ${coinA.symbol}`}
-            inputMode="decimal"
-          />
+          <div className="amount-input-row">
+            <input
+              value={amountA}
+              onChange={(e) => setAmountA(e.target.value)}
+              placeholder={`Amount in ${coinA.symbol}`}
+              inputMode="decimal"
+            />
+            <span className="wallet-balance-pill">
+              <span className="wallet-glyph" />
+              {formatBalance(balances[coinAType] ?? '0', coinA.decimals)} {coinA.symbol}
+            </span>
+          </div>
+          <div className="quick-actions">
+            <button type="button" onClick={() => fillAmount('a', 'quarter')}>QUARTER</button>
+            <button type="button" onClick={() => fillAmount('a', 'half')}>HALF</button>
+            <button type="button" onClick={() => fillAmount('a', 'max')}>MAX</button>
+          </div>
         </div>
 
         <div className="asset-card">
@@ -167,26 +201,45 @@ export function CreatePoolPage() {
               <span>{coinB.name}</span>
             </div>
           </div>
-          <p className="balance-text">
-            Balance: {formatBalance(balances[coinBType] ?? '0', coinB.decimals)} {coinB.symbol}
-          </p>
-          <input
-            value={amountB}
-            onChange={(e) => setAmountB(e.target.value)}
-            placeholder={`Amount in ${coinB.symbol}`}
-            inputMode="decimal"
-          />
+          <div className="amount-input-row">
+            <input
+              value={amountB}
+              onChange={(e) => setAmountB(e.target.value)}
+              placeholder={`Amount in ${coinB.symbol}`}
+              inputMode="decimal"
+            />
+            <span className="wallet-balance-pill">
+              <span className="wallet-glyph" />
+              {formatBalance(balances[coinBType] ?? '0', coinB.decimals)} {coinB.symbol}
+            </span>
+          </div>
+          <div className="quick-actions">
+            <button type="button" onClick={() => fillAmount('b', 'quarter')}>QUARTER</button>
+            <button type="button" onClick={() => fillAmount('b', 'half')}>HALF</button>
+            <button type="button" onClick={() => fillAmount('b', 'max')}>MAX</button>
+          </div>
         </div>
 
-        <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-          {isSubmitting ? 'Creating Pool...' : 'Create Pool'}
-        </button>
+        <div className="create-action-wrap">
+          <button type="submit" className="btn btn-primary full-width-btn create-pool-btn" disabled={isSubmitting}>
+            {isSubmitting ? 'Creating Pool...' : 'Create Pool'}
+          </button>
+        </div>
       </form>
 
       {feedback ? <p className="status-line">{feedback}</p> : null}
       {txDigest ? (
         <a className="status-link" href={suiscTxUrl(txDigest)} target="_blank" rel="noreferrer">
           View transaction on SuiScan
+        </a>
+      ) : null}
+      {createdPoolId ? (
+        <a className="pool-suiscan-link" href={suiscObjectUrl(createdPoolId)} target="_blank" rel="noreferrer">
+          <img
+            src="https://suiscan.xyz/static/media/SuiFullLogoDark.410a358de5292b64a837b53bba29463f.svg"
+            alt="SuiScan"
+          />
+          <span>View your pool on-chain</span>
         </a>
       ) : null}
     </section>
