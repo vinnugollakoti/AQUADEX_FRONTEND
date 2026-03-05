@@ -220,6 +220,58 @@ export function LandingPage() {
         </div>
       </section>
 
+      <section className="landing-block fee-launch-panel">
+        <p className="landing-kicker">LP Economics</p>
+        <h2>LP-First Fee Design</h2>
+        <p className="section-copy">
+          This protocol takes <strong>0% reward</strong> for your LP. LPs get <strong>0.3% fee</strong>.
+        </p>
+
+        <div className="fee-scoreboard">
+          <article>
+            <span>Protocol Reward</span>
+            <strong>0%</strong>
+          </article>
+          <article>
+            <span>LP Fee Share</span>
+            <strong>0.3%</strong>
+          </article>
+        </div>
+
+        <div className="launch-strip">
+          <p className="launch-title">We are launching AquaLend and AquaDex CLMM</p>
+          <div className="launch-logos">
+            <article className="launch-logo-card">
+              <div className="launch-logo aqua">
+                <img src="/aquadex-logo.png" alt="AquaDex" />
+              </div>
+              <strong>AquaDex</strong>
+            </article>
+            <article className="launch-logo-card">
+              <div className="launch-logo lend" aria-hidden>
+                <svg viewBox="0 0 48 48">
+                  <circle cx="24" cy="24" r="21" fill="#12353a" />
+                  <path d="M24 9C17 16 14 22 14 27.8C14 33.4 18.6 38 24 38C29.4 38 34 33.4 34 27.8C34 22 31 16 24 9Z" fill="#58ebda" />
+                  <path d="M17.3 28.4H30.7" stroke="#082328" strokeWidth="2.4" strokeLinecap="round" />
+                </svg>
+              </div>
+              <strong>AquaLend</strong>
+            </article>
+            <article className="launch-logo-card">
+              <div className="launch-logo clmm" aria-hidden>
+                <svg viewBox="0 0 48 48">
+                  <rect x="4" y="4" width="40" height="40" rx="12" fill="#102730" />
+                  <rect x="12" y="15" width="6" height="18" rx="3" fill="#8cefe5" />
+                  <rect x="21" y="11" width="6" height="26" rx="3" fill="#48dacb" />
+                  <rect x="30" y="19" width="6" height="14" rx="3" fill="#2fb7e6" />
+                </svg>
+              </div>
+              <strong>AquaDex CLMM</strong>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section className="landing-block aqua-coin-panel">
         <div className="aqua-coin-copy">
           <p className="landing-kicker">LP Rewards</p>
