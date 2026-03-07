@@ -8,6 +8,8 @@ import { buildCoinInput, getAllCoinsByType } from '../utils/txCoins'
 
 type BalanceByType = Record<string, string>
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
 export function CreatePoolPage() {
   const client = useSuiClient()
   const account = useCurrentAccount()
@@ -158,16 +160,36 @@ export function CreatePoolPage() {
       )
       setBalances(Object.fromEntries(refreshed))
 
-      const txResult = await client.getTransactionBlock({
-        digest: result.digest,
-        options: { showEvents: true },
-      })
-      const createdEvent = txResult.events?.find(
-        (evt) => evt.type === `${PACKAGE_ID}::events::PoolCreatedEvent`,
-      )
+      let createdEvent:
+        | {
+            type?: string
+            parsedJson?: unknown
+          }
+        | undefined
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          const txResult = await client.getTransactionBlock({
+            digest: result.digest,
+            options: { showEvents: true },
+          })
+          createdEvent = txResult.events?.find(
+            (evt) => evt.type === `${PACKAGE_ID}::events::PoolCreatedEvent`,
+          )
+        } catch (txError) {
+          const message = txError instanceof Error ? txError.message : String(txError)
+          const isLaggingLookup = message.includes('Could not find the referenced transaction')
+          if (!isLaggingLookup) break
+          await delay(400 * (attempt + 1))
+        }
+      }
+
       const poolId = (createdEvent?.parsedJson as { pool_id?: string } | undefined)?.pool_id
-      if (poolId) {
-        setCreatedPoolId(poolId)
+      if (poolId) setCreatedPoolId(poolId)
+      else {
+        setFeedback(
+          'Pool created successfully. Pool object link may appear after a short indexer delay.',
+        )
       }
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Failed to create pool.')
