@@ -1,9 +1,10 @@
-import { ConnectButton } from '@mysten/dapp-kit'
 import { NavLink } from 'react-router-dom'
+import { WalletMenu } from './WalletMenu'
 
 const links = [
   { to: '/', label: 'Home' },
   { to: '/swap', label: 'Swap' },
+  { to: '/aqualend', label: 'AquaLend' },
   { to: '/pools', label: 'Pools' },
   { to: '/create-pool', label: 'Create Pool' },
   { to: '/coins', label: 'Coins' },
@@ -33,7 +34,7 @@ export function Navbar() {
         ))}
       </nav>
 
-      <ConnectButton connectText="Connect Wallet" className="wallet-btn" />
+      <WalletMenu />
     </header>
   )
 }
