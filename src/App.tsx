@@ -7,6 +7,7 @@ import { PoolsPage } from './pages/PoolsPage'
 import { PoolDetailPage } from './pages/PoolDetailPage'
 import { SwapPage } from './pages/SwapPage'
 import { SimplePage } from './pages/SimplePage'
+import { AquaLendPage } from './pages/AquaLendPage'
 import './App.css'
 
 function App() {
@@ -26,6 +27,7 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/swap" element={<SwapPage />} />
+          <Route path="/aqualend" element={<AquaLendPage />} />
           <Route path="/pools" element={<PoolsPage />} />
           <Route path="/pools/:poolId" element={<PoolDetailPage />} />
           <Route path="/create-pool" element={<CreatePoolPage />} />
