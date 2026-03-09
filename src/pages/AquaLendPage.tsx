@@ -3,7 +3,7 @@ import { Transaction } from '@mysten/sui/transactions'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { COINS, COIN_BY_TYPE, SUI_COIN_TYPE, type CoinInfo } from '../constants/coins'
 import { NETWORK_CHAIN, suiscTxUrl } from '../constants/sui'
-import { formatBaseUnits, parseAmountToBaseUnits, toDecimalNumber, truncateAddress } from '../utils/amounts'
+import { formatBaseUnits, parseAmountToBaseUnits, toDecimalNumber } from '../utils/amounts'
 import { extractBalanceValue, shortTypeName } from '../utils/pools'
 import { buildCoinInput, getAllCoinsByType } from '../utils/txCoins'
 
@@ -12,6 +12,7 @@ type Category = 'Stablecoins' | 'Bridged' | 'DeFi' | 'SUI' | 'BTC'
 type LendAsset = {
   marketId: string
   coinType: string
+  collateralFactor: number
   logoUrl: string
   symbol: string
   name: string
@@ -35,16 +36,18 @@ type PositionRow = {
 type ActionKind = 'supply' | 'borrow'
 
 const AQUALEND_PACKAGE_ID =
-  '0x999c7967c0536d2a9e7ab3ab97330627da96efbec7b84b70ff82c72c23385755'
+  '0xe0568ee1b9cf1017be543c99c877d2f686470309b3d8983d0c4e5af748044635'
 const AQUALEND_ADMIN =
   '0x7c88663e7928a8fcd1a8c16f110580270cde571987ff1ccfa7c72d772370604d'
 const AQUALEND_GLOBAL_CONFIG_ID =
-  '0x83c42087e0f03d152789769e22f54038d5500b7234326e9af6361006918cf97a'
+  '0xc5de9a2de46b335a482e35b4a9444c5edeee369be075a654e16a5fa522cb0ab6'
 const MARKET_TYPE_PREFIX = `${AQUALEND_PACKAGE_ID}::market::Market<`
 const POSITION_TYPE = `${AQUALEND_PACKAGE_ID}::position::Position`
 const NAVI_PRICE_API = '/api/navi-price'
 const NAVI_CHAIN = 1999
 const PRICE_SCALE = 1_000_000
+const U64_MAX = 18_446_744_073_709_551_615n
+const POSITION_DUST_USD = 0.01
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const CATEGORY_TABS: Array<'All' | Category> = ['All', 'Stablecoins', 'Bridged', 'DeFi', 'SUI', 'BTC']
@@ -63,9 +66,10 @@ function categorizeCoin(coin: CoinInfo | null): Category[] {
 }
 
 function formatUsdNumber(value: number): string {
-  return `$${value.toLocaleString(undefined, {
-    minimumFractionDigits: value < 1 ? 4 : 2,
-    maximumFractionDigits: 4,
+  const safeValue = Number.isFinite(value) ? value : 0
+  return `$${safeValue.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })}`
 }
 
@@ -232,14 +236,21 @@ export function AquaLendPage() {
   const [showPauseConfirmModal, setShowPauseConfirmModal] = useState(false)
   const [showActionModal, setShowActionModal] = useState(false)
   const [showWithdrawModal, setShowWithdrawModal] = useState(false)
+  const [showRepayModal, setShowRepayModal] = useState(false)
   const [actionKind, setActionKind] = useState<ActionKind>('supply')
   const [actionMarket, setActionMarket] = useState<LendAsset | null>(null)
   const [actionAmount, setActionAmount] = useState('')
   const [actionPrice, setActionPrice] = useState('')
+  const [borrowSliderPct, setBorrowSliderPct] = useState(0)
   const [selectedPositionId, setSelectedPositionId] = useState('')
   const [selectedWithdrawPosition, setSelectedWithdrawPosition] = useState<PositionRow | null>(null)
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [withdrawPrice, setWithdrawPrice] = useState('')
+  const [withdrawSliderPct, setWithdrawSliderPct] = useState(0)
+  const [selectedRepayPosition, setSelectedRepayPosition] = useState<PositionRow | null>(null)
+  const [repayAmount, setRepayAmount] = useState('')
+  const [repayPrice, setRepayPrice] = useState('')
+  const [repaySliderPct, setRepaySliderPct] = useState(0)
   const [marketCoinType, setMarketCoinType] = useState(COINS[0]?.coinType ?? '')
   const [coinPickerOpen, setCoinPickerOpen] = useState(false)
   const [collateralFactorInput, setCollateralFactorInput] = useState('8000')
@@ -275,10 +286,10 @@ export function AquaLendPage() {
             const supplyAmount = toDecimalNumber(totalDepositsRaw, coin?.decimals ?? 0)
             const borrowAmount = toDecimalNumber(totalBorrowsRaw, coin?.decimals ?? 0)
             const price = pricesByCoinType[coinType] ?? 0
-
             return {
               marketId: data.objectId,
               coinType,
+              collateralFactor: Number(content?.fields?.collateral_factor ?? 0),
               logoUrl: coin?.logoUrl ?? '/aquadex-logo.png',
               symbol: coin?.symbol ?? shortTypeName(coinType),
               name: coin?.name ?? shortTypeName(coinType),
@@ -288,8 +299,8 @@ export function AquaLendPage() {
               supplyValue: formatUsdNumber(supplyAmount * price),
               borrow: formatBaseUnits(totalBorrowsRaw, coin?.decimals ?? 0, 6),
               borrowValue: formatUsdNumber(borrowAmount * price),
-              supplyApr: '0.000%',
-              borrowApr: '0.000%',
+              supplyApr: '0.00%',
+              borrowApr: '0.00%',
             } as LendAsset
           })
           .filter((row): row is LendAsset => Boolean(row))
@@ -406,6 +417,22 @@ export function AquaLendPage() {
     void loadPrices()
   }, [])
 
+  useEffect(() => {
+    const hasOpenModal =
+      showCreateMarketModal ||
+      showPauseConfirmModal ||
+      showActionModal ||
+      showWithdrawModal ||
+      showRepayModal
+    if (!hasOpenModal) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [showActionModal, showCreateMarketModal, showPauseConfirmModal, showWithdrawModal, showRepayModal])
+
   const filteredAssets = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return markets.filter((asset) => {
@@ -443,30 +470,259 @@ export function AquaLendPage() {
   }, [account?.address, pricesByCoinType, walletBalances])
 
   const supplyPositions = useMemo(
-    () => positions.filter((item) => item.collateralValue > 0n),
+    () =>
+      positions.filter((item) => {
+        const decimals = COIN_BY_TYPE[item.coinType ?? '']?.decimals ?? 9
+        const collateralUsd = toDecimalNumber(item.collateralValue, decimals + 6)
+        return collateralUsd > POSITION_DUST_USD
+      }),
+    [positions],
+  )
+  const activePositions = useMemo(
+    () =>
+      positions.filter((item) => {
+        const decimals = COIN_BY_TYPE[item.coinType ?? '']?.decimals ?? 9
+        const collateralUsd = toDecimalNumber(item.collateralValue, decimals + 6)
+        const borrowedUsd = toDecimalNumber(item.borrowedValue, decimals + 6)
+        return collateralUsd > POSITION_DUST_USD || borrowedUsd > POSITION_DUST_USD
+      }),
     [positions],
   )
   const borrowPositions = useMemo(
-    () => positions.filter((item) => item.borrowedValue > 0n),
+    () =>
+      positions.filter((item) => {
+        const decimals = COIN_BY_TYPE[item.coinType ?? '']?.decimals ?? 9
+        const borrowedUsd = toDecimalNumber(item.borrowedValue, decimals + 6)
+        return borrowedUsd > POSITION_DUST_USD
+      }),
     [positions],
   )
 
-  const tvlDisplay = '$0'
-  const totalSupplyDisplay = '$0'
-  const totalBorrowDisplay = '$0'
+  const marketTotals = useMemo(() => {
+    const totals = { supplyUsd: 0, borrowUsd: 0 }
+    for (const market of markets) {
+      const price = pricesByCoinType[market.coinType] ?? 0
+      const supplyAmount = Number(market.supply)
+      const borrowAmount = Number(market.borrow)
+      if (Number.isFinite(supplyAmount)) totals.supplyUsd += supplyAmount * price
+      if (Number.isFinite(borrowAmount)) totals.borrowUsd += borrowAmount * price
+    }
+    return totals
+  }, [markets, pricesByCoinType])
+
+  const tvlDisplay = formatUsdNumber(Math.max(0, marketTotals.supplyUsd - marketTotals.borrowUsd))
+  const totalSupplyDisplay = formatUsdNumber(marketTotals.supplyUsd)
+  const totalBorrowDisplay = formatUsdNumber(marketTotals.borrowUsd)
 
   const marketByCoinType = useMemo(
     () => Object.fromEntries(markets.map((market) => [market.coinType, market])) as Record<string, LendAsset>,
     [markets],
   )
 
+  const activeBorrowPosition = useMemo(() => {
+    if (!selectedPositionId) return null
+    return positions.find((item) => item.id === selectedPositionId) ?? null
+  }, [positions, selectedPositionId])
+
+  const borrowPriceNum = useMemo(() => {
+    if (!actionMarket) return 0
+    const parsed = Number(actionPrice)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+    return pricesByCoinType[actionMarket.coinType] ?? 0
+  }, [actionMarket, actionPrice, pricesByCoinType])
+
+  const borrowPriceScaled = useMemo(() => {
+    return BigInt(Math.max(0, Math.floor(borrowPriceNum * PRICE_SCALE)))
+  }, [borrowPriceNum])
+
+  const availableBorrowRaw = useMemo(() => {
+    if (actionKind !== 'borrow' || !actionMarket || !activeBorrowPosition) return 0n
+    if (activeBorrowPosition.collateralValue <= 0n || borrowPriceScaled <= 0n) return 0n
+    const collateralFactor = BigInt(Math.max(0, actionMarket.collateralFactor))
+    const maxBorrowValue = (activeBorrowPosition.collateralValue * collateralFactor) / 10000n
+    const remainingValue = maxBorrowValue - activeBorrowPosition.borrowedValue
+    if (remainingValue <= 0n) return 0n
+    return remainingValue / borrowPriceScaled
+  }, [actionKind, actionMarket, activeBorrowPosition, borrowPriceScaled])
+
+  const borrowAmountUsd = useMemo(() => {
+    if (!actionMarket || actionKind !== 'borrow') return 0
+    if (!actionAmount.trim()) return 0
+    const coin = COIN_BY_TYPE[actionMarket.coinType]
+    if (!coin || borrowPriceNum <= 0) return 0
+    try {
+      const amountRaw = parseAmountToBaseUnits(actionAmount, coin.decimals)
+      const amount = toDecimalNumber(amountRaw, coin.decimals)
+      return amount * borrowPriceNum
+    } catch {
+      return 0
+    }
+  }, [actionAmount, actionKind, actionMarket, borrowPriceNum])
+
+  const availableBorrowDisplay = useMemo(() => {
+    if (!actionMarket) return '0'
+    const coin = COIN_BY_TYPE[actionMarket.coinType]
+    if (!coin) return '0'
+    return formatBaseUnits(availableBorrowRaw, coin.decimals, 6)
+  }, [actionMarket, availableBorrowRaw])
+
+  const availableSupplyRaw = useMemo(() => {
+    if (actionKind !== 'supply' || !actionMarket) return 0n
+    return BigInt(walletBalances[actionMarket.coinType] ?? '0')
+  }, [actionKind, actionMarket, walletBalances])
+
+  const supplyAmountUsd = useMemo(() => {
+    if (!actionMarket || actionKind !== 'supply') return 0
+    if (!actionAmount.trim()) return 0
+    const coin = COIN_BY_TYPE[actionMarket.coinType]
+    if (!coin || borrowPriceNum <= 0) return 0
+    try {
+      const amountRaw = parseAmountToBaseUnits(actionAmount, coin.decimals)
+      const amount = toDecimalNumber(amountRaw, coin.decimals)
+      return amount * borrowPriceNum
+    } catch {
+      return 0
+    }
+  }, [actionAmount, actionKind, actionMarket, borrowPriceNum])
+
+  const availableSupplyDisplay = useMemo(() => {
+    if (!actionMarket) return '0'
+    const coin = COIN_BY_TYPE[actionMarket.coinType]
+    if (!coin) return '0'
+    return formatBaseUnits(availableSupplyRaw, coin.decimals, 6)
+  }, [actionMarket, availableSupplyRaw])
+
+  const activeAvailableRaw = actionKind === 'borrow' ? availableBorrowRaw : availableSupplyRaw
+  const activeAmountUsd = actionKind === 'borrow' ? borrowAmountUsd : supplyAmountUsd
+  const activeAvailableDisplay =
+    actionKind === 'borrow' ? availableBorrowDisplay : availableSupplyDisplay
+
+  const selectedWithdrawCoinType = selectedWithdrawPosition?.coinType ?? ''
+  const selectedWithdrawCoin = COIN_BY_TYPE[selectedWithdrawCoinType] ?? null
+  const selectedWithdrawMarket = marketByCoinType[selectedWithdrawCoinType]
+  const withdrawPriceNum = useMemo(() => {
+    const parsed = Number(withdrawPrice)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+    if (!selectedWithdrawCoinType) return 0
+    return pricesByCoinType[selectedWithdrawCoinType] ?? 0
+  }, [pricesByCoinType, selectedWithdrawCoinType, withdrawPrice])
+  const withdrawPriceScaled = useMemo(
+    () => BigInt(Math.max(0, Math.floor(withdrawPriceNum * PRICE_SCALE))),
+    [withdrawPriceNum],
+  )
+  const withdrawableRaw = useMemo(() => {
+    if (!selectedWithdrawPosition || !selectedWithdrawMarket) return 0n
+    if (withdrawPriceScaled <= 0n) return 0n
+    const collateralValue = selectedWithdrawPosition.collateralValue
+    const borrowedValueRaw = selectedWithdrawPosition.borrowedValue
+    const collateralFactor = BigInt(Math.max(1, selectedWithdrawMarket.collateralFactor))
+    const requiredCollateralValue = (borrowedValueRaw * 10000n) / collateralFactor
+    const maxWithdrawValue = collateralValue > requiredCollateralValue ? collateralValue - requiredCollateralValue : 0n
+    if (maxWithdrawValue <= 0n) return 0n
+    return maxWithdrawValue / withdrawPriceScaled
+  }, [selectedWithdrawMarket, selectedWithdrawPosition, withdrawPriceScaled])
+  const withdrawableDisplay = useMemo(() => {
+    if (!selectedWithdrawCoin) return '0'
+    return formatBaseUnits(withdrawableRaw, selectedWithdrawCoin.decimals, 6)
+  }, [selectedWithdrawCoin, withdrawableRaw])
+  const withdrawAmountUsd = useMemo(() => {
+    if (!selectedWithdrawCoin || !withdrawAmount.trim() || withdrawPriceNum <= 0) return 0
+    try {
+      const amountRaw = parseAmountToBaseUnits(withdrawAmount, selectedWithdrawCoin.decimals)
+      const amount = toDecimalNumber(amountRaw, selectedWithdrawCoin.decimals)
+      return amount * withdrawPriceNum
+    } catch {
+      return 0
+    }
+  }, [selectedWithdrawCoin, withdrawAmount, withdrawPriceNum])
+
+  const selectedRepayCoinType = selectedRepayPosition?.coinType ?? ''
+  const selectedRepayCoin = COIN_BY_TYPE[selectedRepayCoinType] ?? null
+  const selectedRepayMarket = marketByCoinType[selectedRepayCoinType]
+  const repayPriceNum = useMemo(() => {
+    const parsed = Number(repayPrice)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+    if (!selectedRepayCoinType) return 0
+    return pricesByCoinType[selectedRepayCoinType] ?? 0
+  }, [pricesByCoinType, repayPrice, selectedRepayCoinType])
+  const repayPriceScaled = useMemo(
+    () => BigInt(Math.max(0, Math.floor(repayPriceNum * PRICE_SCALE))),
+    [repayPriceNum],
+  )
+  const repayDebtRaw = useMemo(() => {
+    if (!selectedRepayPosition) return 0n
+    if (repayPriceScaled <= 0n) return 0n
+    // ceil(borrowedValue / price) so dust debt can still be repaid with one base unit
+    return (selectedRepayPosition.borrowedValue + repayPriceScaled - 1n) / repayPriceScaled
+  }, [repayPriceScaled, selectedRepayPosition])
+  const repayWalletRaw = useMemo(() => {
+    if (!selectedRepayCoinType) return 0n
+    return BigInt(walletBalances[selectedRepayCoinType] ?? '0')
+  }, [selectedRepayCoinType, walletBalances])
+  const repayAvailableRaw = useMemo(() => {
+    if (!selectedRepayPosition || !selectedRepayMarket) return 0n
+    return repayWalletRaw < repayDebtRaw ? repayWalletRaw : repayDebtRaw
+  }, [repayDebtRaw, repayWalletRaw, selectedRepayMarket, selectedRepayPosition])
+  const repayAvailableDisplay = useMemo(() => {
+    if (!selectedRepayCoin) return '0'
+    return formatBaseUnits(repayAvailableRaw, selectedRepayCoin.decimals, 6)
+  }, [repayAvailableRaw, selectedRepayCoin])
+  const repayAmountUsd = useMemo(() => {
+    if (!selectedRepayCoin || !repayAmount.trim() || repayPriceNum <= 0) return 0
+    try {
+      const amountRaw = parseAmountToBaseUnits(repayAmount, selectedRepayCoin.decimals)
+      const amount = toDecimalNumber(amountRaw, selectedRepayCoin.decimals)
+      return amount * repayPriceNum
+    } catch {
+      return 0
+    }
+  }, [repayAmount, repayPriceNum, selectedRepayCoin])
+
   const openActionModal = (kind: ActionKind, market: LendAsset) => {
     setActionKind(kind)
     setActionMarket(market)
     setActionAmount('')
     setActionPrice(String(pricesByCoinType[market.coinType] ?? 0))
-    setSelectedPositionId((prev) => prev || positions[0]?.id || '')
+    const supplyPosition = supplyPositions[0]
+    setSelectedPositionId((prev) => prev || supplyPosition?.id || activePositions[0]?.id || '')
+    setBorrowSliderPct(0)
     setShowActionModal(true)
+  }
+
+  const onActionAmountChange = (value: string) => {
+    setActionAmount(value)
+    if (!actionMarket) {
+      setBorrowSliderPct(0)
+      return
+    }
+    const coin = COIN_BY_TYPE[actionMarket.coinType]
+    if (!coin || activeAvailableRaw <= 0n || !value.trim()) {
+      setBorrowSliderPct(0)
+      return
+    }
+    try {
+      const amountRaw = parseAmountToBaseUnits(value, coin.decimals)
+      const pct = Number((amountRaw * 10000n) / activeAvailableRaw) / 100
+      setBorrowSliderPct(Math.max(0, Math.min(100, pct)))
+    } catch {
+      setBorrowSliderPct(0)
+    }
+  }
+
+  const onActionSliderChange = (nextPct: number) => {
+    setBorrowSliderPct(nextPct)
+    if (!actionMarket) return
+    const coin = COIN_BY_TYPE[actionMarket.coinType]
+    if (!coin || activeAvailableRaw <= 0n) {
+      setActionAmount('')
+      return
+    }
+    const amountRaw = (activeAvailableRaw * BigInt(Math.round(nextPct * 100))) / 10000n
+    if (amountRaw <= 0n) {
+      setActionAmount('')
+      return
+    }
+    setActionAmount(formatBaseUnits(amountRaw, coin.decimals, 6))
   }
 
   const onCreateMarket = async (event: React.FormEvent) => {
@@ -504,17 +760,18 @@ export function AquaLendPage() {
           {
             marketId: `pending-${result.digest}`,
             coinType: selectedCoinType,
+            collateralFactor,
             logoUrl: selectedCoin?.logoUrl ?? '/aquadex-logo.png',
             symbol: selectedCoin?.symbol ?? shortTypeName(selectedCoinType),
             name: selectedCoin?.name ?? shortTypeName(selectedCoinType),
             price: formatUsdNumber(pricesByCoinType[selectedCoinType] ?? 0),
             categories: categorizeCoin(selectedCoin),
             supply: '0',
-            supplyValue: '$0',
+            supplyValue: formatUsdNumber(0),
             borrow: '0',
-            borrowValue: '$0',
-            supplyApr: '0.000%',
-            borrowApr: '0.000%',
+            borrowValue: formatUsdNumber(0),
+            supplyApr: '0.00%',
+            borrowApr: '0.00%',
           },
           ...prev,
         ]
@@ -620,6 +877,7 @@ export function AquaLendPage() {
       if (actionKind === 'supply') {
         const amountRaw = parseAmountToBaseUnits(actionAmount, coin.decimals)
         if (amountRaw <= 0n) throw new Error('Supply amount must be greater than 0.')
+        if (amountRaw > availableSupplyRaw) throw new Error('Supply amount exceeds available wallet balance.')
 
         const coinObjects =
           actionMarket.coinType === SUI_COIN_TYPE
@@ -627,7 +885,7 @@ export function AquaLendPage() {
             : await getAllCoinsByType(client, account.address, actionMarket.coinType)
         const coinInput = buildCoinInput(tx, actionMarket.coinType, amountRaw, coinObjects)
 
-        if (positions.length === 0) {
+        if (activePositions.length === 0) {
           tx.moveCall({
             target: `${AQUALEND_PACKAGE_ID}::vault::new_deposit`,
             typeArguments: [actionMarket.coinType],
@@ -656,6 +914,7 @@ export function AquaLendPage() {
         if (!selectedPositionId) throw new Error('Select a position first.')
         const amountRaw = parseAmountToBaseUnits(actionAmount, coin.decimals)
         if (amountRaw <= 0n) throw new Error('Borrow amount must be greater than 0.')
+        if (amountRaw > availableBorrowRaw) throw new Error('Borrow amount exceeds available borrow balance.')
 
         tx.moveCall({
           target: `${AQUALEND_PACKAGE_ID}::vault::borrow`,
@@ -696,7 +955,46 @@ export function AquaLendPage() {
     const coinType = position.coinType ?? ''
     setWithdrawAmount('')
     setWithdrawPrice(String(pricesByCoinType[coinType] ?? 0))
+    setWithdrawSliderPct(0)
     setShowWithdrawModal(true)
+  }
+
+  const onOpenRepayModal = (position: PositionRow) => {
+    setSelectedRepayPosition(position)
+    const coinType = position.coinType ?? ''
+    setRepayAmount('')
+    setRepayPrice(String(pricesByCoinType[coinType] ?? 0))
+    setRepaySliderPct(0)
+    setShowRepayModal(true)
+  }
+
+  const onWithdrawAmountChange = (value: string) => {
+    setWithdrawAmount(value)
+    if (!selectedWithdrawCoin || withdrawableRaw <= 0n || !value.trim()) {
+      setWithdrawSliderPct(0)
+      return
+    }
+    try {
+      const amountRaw = parseAmountToBaseUnits(value, selectedWithdrawCoin.decimals)
+      const pct = Number((amountRaw * 10000n) / withdrawableRaw) / 100
+      setWithdrawSliderPct(Math.max(0, Math.min(100, pct)))
+    } catch {
+      setWithdrawSliderPct(0)
+    }
+  }
+
+  const onWithdrawSliderChange = (nextPct: number) => {
+    setWithdrawSliderPct(nextPct)
+    if (!selectedWithdrawCoin || withdrawableRaw <= 0n) {
+      setWithdrawAmount('')
+      return
+    }
+    const amountRaw = (withdrawableRaw * BigInt(Math.round(nextPct * 100))) / 10000n
+    if (amountRaw <= 0n) {
+      setWithdrawAmount('')
+      return
+    }
+    setWithdrawAmount(formatBaseUnits(amountRaw, selectedWithdrawCoin.decimals, 6))
   }
 
   const onSubmitWithdraw = async (event: React.FormEvent) => {
@@ -721,6 +1019,7 @@ export function AquaLendPage() {
 
       const amountRaw = parseAmountToBaseUnits(withdrawAmount, coin.decimals)
       if (amountRaw <= 0n) throw new Error('Withdraw amount must be greater than 0.')
+      if (amountRaw > withdrawableRaw) throw new Error('Withdraw amount exceeds withdrawable balance.')
 
       const priceNum = Number(withdrawPrice)
       if (!Number.isFinite(priceNum) || priceNum <= 0) {
@@ -759,6 +1058,113 @@ export function AquaLendPage() {
       }
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Failed to withdraw.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const onRepayAmountChange = (value: string) => {
+    setRepayAmount(value)
+    if (!selectedRepayCoin || repayAvailableRaw <= 0n || !value.trim()) {
+      setRepaySliderPct(0)
+      return
+    }
+    try {
+      const amountRaw = parseAmountToBaseUnits(value, selectedRepayCoin.decimals)
+      const pct = Number((amountRaw * 10000n) / repayAvailableRaw) / 100
+      setRepaySliderPct(Math.max(0, Math.min(100, pct)))
+    } catch {
+      setRepaySliderPct(0)
+    }
+  }
+
+  const onRepaySliderChange = (nextPct: number) => {
+    setRepaySliderPct(nextPct)
+    if (!selectedRepayCoin || repayAvailableRaw <= 0n) {
+      setRepayAmount('')
+      return
+    }
+    const amountRaw = (repayAvailableRaw * BigInt(Math.round(nextPct * 100))) / 10000n
+    if (amountRaw <= 0n) {
+      setRepayAmount('')
+      return
+    }
+    setRepayAmount(formatBaseUnits(amountRaw, selectedRepayCoin.decimals, 6))
+  }
+
+  const onSubmitRepay = async (event: React.FormEvent) => {
+    event.preventDefault()
+    try {
+      setFeedback('')
+      setTxDigest('')
+
+      if (!account?.address) throw new Error('Connect wallet first.')
+      if (!selectedRepayPosition) throw new Error('Select a borrow position first.')
+      if (!selectedRepayPosition.coinType) {
+        throw new Error('Could not infer coin type for this position.')
+      }
+      if (!configId) throw new Error('Missing GlobalConfig object.')
+
+      const coinType = selectedRepayPosition.coinType
+      const coin = COIN_BY_TYPE[coinType]
+      if (!coin) throw new Error('Unsupported coin metadata for this position.')
+
+      const market = marketByCoinType[coinType]
+      if (!market) throw new Error('Matching market not found for this position.')
+
+      const amountRaw = parseAmountToBaseUnits(repayAmount, coin.decimals)
+      if (amountRaw <= 0n) throw new Error('Repay amount must be greater than 0.')
+      if (amountRaw > repayAvailableRaw) throw new Error('Repay amount exceeds available repay balance.')
+
+      const priceNum = Number(repayPrice)
+      if (!Number.isFinite(priceNum) || priceNum <= 0) {
+        throw new Error('Enter a valid price greater than 0.')
+      }
+      let priceU64 = BigInt(Math.floor(priceNum * PRICE_SCALE))
+      if (priceU64 <= 0n) throw new Error('Price parameter is too small.')
+
+      // For full repay, maximize repay_value safely to avoid tiny leftover dust.
+      if (amountRaw === repayAvailableRaw && selectedRepayPosition.borrowedValue > 0n) {
+        const maxSafePrice = selectedRepayPosition.borrowedValue / amountRaw
+        if (maxSafePrice > 0n && maxSafePrice <= U64_MAX) {
+          priceU64 = maxSafePrice
+        }
+      }
+
+      const tx = new Transaction()
+      const coinObjects =
+        coinType === SUI_COIN_TYPE ? [] : await getAllCoinsByType(client, account.address, coinType)
+      const coinInput = buildCoinInput(tx, coinType, amountRaw, coinObjects)
+
+      tx.moveCall({
+        target: `${AQUALEND_PACKAGE_ID}::vault::repay`,
+        typeArguments: [coinType],
+        arguments: [
+          tx.object(configId),
+          tx.object(market.marketId),
+          tx.object(selectedRepayPosition.id),
+          coinInput,
+          tx.pure.u64(priceU64),
+        ],
+      })
+
+      setSubmitting(true)
+      const result = await signAndExecute.mutateAsync({
+        transaction: tx,
+        chain: NETWORK_CHAIN,
+      })
+
+      setTxDigest(result.digest)
+      setFeedback('Repay transaction submitted.')
+      setShowRepayModal(false)
+      setSelectedRepayPosition(null)
+
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await delay(500 * (attempt + 1))
+        await loadOnchainData()
+      }
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Failed to repay.')
     } finally {
       setSubmitting(false)
     }
@@ -824,8 +1230,9 @@ export function AquaLendPage() {
               Pause
             </button>
           )}
-          <span className="admin-meta">
-            Admin: {truncateAddress(AQUALEND_ADMIN, 8)} | Status: {configPaused ? 'Paused' : 'Active'}
+          <span className="admin-status">
+            <span className={`status-dot ${configPaused ? 'paused' : 'live'}`} aria-hidden />
+            <span>{configPaused ? 'Paused' : 'Active'}</span>
           </span>
         </div>
       ) : null}
@@ -874,6 +1281,15 @@ export function AquaLendPage() {
                 ) : null}
                 {filteredAssets.map((asset) => (
                   <tr key={asset.marketId}>
+                    {(() => {
+                      const coinPrice = pricesByCoinType[asset.coinType] ?? 0
+                      const supplyAmount = Number(asset.supply)
+                      const borrowAmount = Number(asset.borrow)
+                      const supplyUsd = Number.isFinite(supplyAmount) ? supplyAmount * coinPrice : 0
+                      const borrowUsd = Number.isFinite(borrowAmount) ? borrowAmount * coinPrice : 0
+
+                      return (
+                        <>
                     <td>
                       <div className="aqualend-asset">
                         <img src={asset.logoUrl} alt={`${asset.symbol} logo`} className="aqualend-asset-logo" />
@@ -883,22 +1299,30 @@ export function AquaLendPage() {
                         </div>
                       </div>
                     </td>
-                    <td>
-                      <strong>{asset.supply}</strong>
-                      <p>{asset.supplyValue}</p>
+                    <td className="metric-col">
+                      <div className="metric-stack">
+                        <strong>{asset.supply}</strong>
+                        <p>{formatUsdNumber(supplyUsd)}</p>
+                      </div>
                     </td>
-                    <td>
-                      <strong>{asset.borrow}</strong>
-                      <p>{asset.borrowValue}</p>
+                    <td className="metric-col">
+                      <div className="metric-stack">
+                        <strong>{asset.borrow}</strong>
+                        <p>{formatUsdNumber(borrowUsd)}</p>
+                      </div>
                     </td>
-                    <td className="apr-positive">{asset.supplyApr}</td>
-                    <td className="apr-warn">{asset.borrowApr}</td>
-                    <td>
+                    <td className="metric-col">
+                      <strong className="apr-positive">{asset.supplyApr}</strong>
+                    </td>
+                    <td className="metric-col">
+                      <strong className="apr-warn">{asset.borrowApr}</strong>
+                    </td>
+                    <td className="actions-col">
                       <div className="aqualend-actions">
                         <button
                           type="button"
                           onClick={() => openActionModal('borrow', asset)}
-                          disabled={submitting || configPaused || positions.length === 0}
+                          disabled={submitting || configPaused || supplyPositions.length === 0}
                         >
                           Borrow
                         </button>
@@ -911,6 +1335,9 @@ export function AquaLendPage() {
                         </button>
                       </div>
                     </td>
+                        </>
+                      )
+                    })()}
                   </tr>
                 ))}
               </tbody>
@@ -946,11 +1373,11 @@ export function AquaLendPage() {
               </div>
               <div>
                 <p>Borrow Limit</p>
-                <strong>$0</strong>
+                <strong>{formatUsdNumber(0)}</strong>
               </div>
               <div>
                 <p>Liq. Level</p>
-                <strong>$0</strong>
+                <strong>{formatUsdNumber(0)}</strong>
               </div>
             </div>
           </section>
@@ -981,12 +1408,20 @@ export function AquaLendPage() {
                 <p className="positions-empty">No {positionTab} positions yet.</p>
               ) : (
                 (positionTab === 'supply' ? supplyPositions : borrowPositions).map((position) => (
-                  <article key={position.id} onClick={() => onOpenWithdrawModal(position)} className="position-row-btn">
+                  <article
+                    key={position.id}
+                    onClick={() =>
+                      positionTab === 'supply' ? onOpenWithdrawModal(position) : onOpenRepayModal(position)
+                    }
+                    className="position-row-btn"
+                  >
                     {(() => {
                       const coin = COIN_BY_TYPE[position.coinType ?? ''] ?? null
                       const price = pricesByCoinType[position.coinType ?? ''] ?? 0
-                      const valueUsd = toDecimalNumber(position.collateralValue, (coin?.decimals ?? 9) + 6)
-                      const suppliedCoins = price > 0 ? valueUsd / price : 0
+                      const collateralUsd = toDecimalNumber(position.collateralValue, (coin?.decimals ?? 9) + 6)
+                      const borrowedUsd = toDecimalNumber(position.borrowedValue, (coin?.decimals ?? 9) + 6)
+                      const suppliedCoins = price > 0 ? collateralUsd / price : 0
+                      const borrowedCoins = price > 0 ? borrowedUsd / price : 0
 
                       return (
                         <>
@@ -999,8 +1434,17 @@ export function AquaLendPage() {
                             <strong>{coin?.symbol ?? shortTypeName(position.coinType ?? 'Unknown')}</strong>
                           </div>
                           <div className="position-amount">
-                            <strong>{suppliedCoins.toFixed(6)} {coin?.symbol ?? ''}</strong>
-                            <p>Collateral: {formatUsdNumber(valueUsd)}</p>
+                            {positionTab === 'supply' ? (
+                              <>
+                                <strong>{suppliedCoins.toFixed(6)} {coin?.symbol ?? ''}</strong>
+                                <p>Collateral: {formatUsdNumber(collateralUsd)}</p>
+                              </>
+                            ) : (
+                              <>
+                                <strong>{borrowedCoins.toFixed(6)} {coin?.symbol ?? ''}</strong>
+                                <p>Borrowed: {formatUsdNumber(borrowedUsd)}</p>
+                              </>
+                            )}
                           </div>
                         </>
                       )
@@ -1134,71 +1578,179 @@ export function AquaLendPage() {
       {showActionModal && actionMarket ? (
         <div className="modal-overlay" role="presentation" onClick={() => setShowActionModal(false)}>
           <div className="create-market-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <h3>{actionKind === 'supply' ? 'Supply Asset' : 'Borrow Asset'}</h3>
-            <p className="section-copy">
-              Market: {actionMarket.symbol} ({truncateAddress(actionMarket.marketId, 8)})
-            </p>
-            <form onSubmit={onSubmitAction} className="create-market-form">
-              <label htmlFor="action-amount">
-                {actionKind === 'supply' ? 'Amount to Supply' : 'Amount to Borrow'}
-              </label>
-              <input
-                id="action-amount"
-                type="text"
-                inputMode="decimal"
-                placeholder={`0.0 ${actionMarket.symbol}`}
-                value={actionAmount}
-                onChange={(event) => setActionAmount(event.target.value)}
-              />
-
-              <label htmlFor="action-price">Price (USD)</label>
-              <input
-                id="action-price"
-                type="number"
-                min={0}
-                step="0.000001"
-                value={actionPrice}
-                onChange={(event) => setActionPrice(event.target.value)}
-              />
-              <p className="section-copy">On-chain param: `u64` price scaled by {PRICE_SCALE}.</p>
-
-              {actionKind === 'borrow' || positions.length > 0 ? (
-                <>
-                  <label htmlFor="position-id">Position</label>
-                  <select
-                    id="position-id"
-                    value={selectedPositionId}
-                    onChange={(event) => setSelectedPositionId(event.target.value)}
+            {actionKind === 'borrow' ? (
+              <>
+                <div className="borrow-modal-head">
+                  <h3>Borrow Position</h3>
+                  <button
+                    type="button"
+                    className="borrow-modal-close"
+                    aria-label="Close borrow modal"
+                    onClick={() => setShowActionModal(false)}
                   >
-                    {positions.map((position) => (
-                      <option key={position.id} value={position.id}>
-                        {truncateAddress(position.id, 8)} | collateral: {position.collateralValue.toString()} |
-                        borrowed: {position.borrowedValue.toString()}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              ) : null}
+                    ×
+                  </button>
+                </div>
+                <div className="borrow-asset-strip">
+                  <img src={actionMarket.logoUrl} alt={`${actionMarket.symbol} logo`} className="aqualend-asset-logo" />
+                  <div>
+                    <strong>{actionMarket.symbol}</strong>
+                    <p>{actionMarket.name}</p>
+                  </div>
+                </div>
+                <form onSubmit={onSubmitAction} className="borrow-modal-form">
+                  <label htmlFor="action-amount">Amount</label>
+                  <div className="borrow-amount-card">
+                    <div className="borrow-amount-meta">
+                      <span>{formatUsdNumber(activeAmountUsd)}</span>
+                      <span>
+                        Available: {activeAvailableDisplay} {actionMarket.symbol}
+                      </span>
+                    </div>
+                    <input
+                      id="action-amount"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder={`0.0 ${actionMarket.symbol}`}
+                      value={actionAmount}
+                      onChange={(event) => onActionAmountChange(event.target.value)}
+                    />
+                  </div>
 
-              <label htmlFor="action-config-id">Global Config Object</label>
-              <input id="action-config-id" value={configId} readOnly />
+                  <div className="borrow-slider-wrap">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round(borrowSliderPct)}
+                      onChange={(event) => onActionSliderChange(Number(event.target.value))}
+                      disabled={activeAvailableRaw <= 0n}
+                    />
+                    <div className="borrow-slider-labels">
+                      <span>0%</span>
+                      <span>25%</span>
+                      <span>50%</span>
+                      <span>75%</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
 
-              <label htmlFor="action-market-id">Market Object</label>
-              <input id="action-market-id" value={actionMarket.marketId} readOnly />
+                  <div className="borrow-overview">
+                    <h4>Transaction Overview</h4>
+                    <div className="borrow-overview-row">
+                      <span>Borrow Fee</span>
+                      <strong>0.3%</strong>
+                    </div>
+                    <div className="borrow-overview-row">
+                      <span>Borrow APR</span>
+                      <strong>{actionMarket.borrowApr}</strong>
+                    </div>
+                    <div className="borrow-overview-row">
+                      <span>Health Factor</span>
+                      <strong>{activeBorrowPosition?.collateralValue ? '1.00' : '∞'}</strong>
+                    </div>
+                  </div>
 
-              <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowActionModal(false)}>
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={submitting || (actionKind === 'borrow' && positions.length === 0)}
-                >
-                  {submitting ? 'Submitting...' : actionKind === 'supply' ? 'Confirm Supply' : 'Confirm Borrow'}
-                </button>
-              </div>
-            </form>
+                  <div className="modal-actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setShowActionModal(false)}>
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={submitting || supplyPositions.length === 0 || availableBorrowRaw <= 0n}
+                    >
+                      {submitting ? 'Submitting...' : actionAmount.trim() ? 'Confirm Borrow' : 'Enter An Amount'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <>
+                <div className="borrow-modal-head">
+                  <h3>Supply Position</h3>
+                  <button
+                    type="button"
+                    className="borrow-modal-close"
+                    aria-label="Close supply modal"
+                    onClick={() => setShowActionModal(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="borrow-asset-strip">
+                  <img src={actionMarket.logoUrl} alt={`${actionMarket.symbol} logo`} className="aqualend-asset-logo" />
+                  <div>
+                    <strong>{actionMarket.symbol}</strong>
+                    <p>{actionMarket.name}</p>
+                  </div>
+                </div>
+                <form onSubmit={onSubmitAction} className="borrow-modal-form">
+                  <label htmlFor="action-amount">Amount</label>
+                  <div className="borrow-amount-card">
+                    <div className="borrow-amount-meta">
+                      <span>{formatUsdNumber(activeAmountUsd)}</span>
+                      <span>
+                        Available: {activeAvailableDisplay} {actionMarket.symbol}
+                      </span>
+                    </div>
+                    <input
+                      id="action-amount"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder={`0.0 ${actionMarket.symbol}`}
+                      value={actionAmount}
+                      onChange={(event) => onActionAmountChange(event.target.value)}
+                    />
+                  </div>
+
+                  <div className="borrow-slider-wrap">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={Math.round(borrowSliderPct)}
+                      onChange={(event) => onActionSliderChange(Number(event.target.value))}
+                      disabled={activeAvailableRaw <= 0n}
+                    />
+                    <div className="borrow-slider-labels">
+                      <span>0%</span>
+                      <span>25%</span>
+                      <span>50%</span>
+                      <span>75%</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
+
+                  <div className="borrow-overview">
+                    <h4>Transaction Overview</h4>
+                    <div className="borrow-overview-row">
+                      <span>Supply Fee</span>
+                      <strong>0.0%</strong>
+                    </div>
+                    <div className="borrow-overview-row">
+                      <span>Supply APR</span>
+                      <strong>{actionMarket.supplyApr}</strong>
+                    </div>
+                    <div className="borrow-overview-row">
+                      <span>Health Factor</span>
+                      <strong>{supplyPositions.length > 0 ? '1.00' : '∞'}</strong>
+                    </div>
+                  </div>
+
+                  <div className="modal-actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setShowActionModal(false)}>
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={submitting || activeAvailableRaw <= 0n}>
+                      {submitting ? 'Submitting...' : actionAmount.trim() ? 'Confirm Supply' : 'Enter An Amount'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
           </div>
         </div>
       ) : null}
@@ -1206,32 +1758,84 @@ export function AquaLendPage() {
       {showWithdrawModal && selectedWithdrawPosition ? (
         <div className="modal-overlay" role="presentation" onClick={() => setShowWithdrawModal(false)}>
           <div className="create-market-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <h3>Withdraw</h3>
-            <p className="section-copy">Position: {truncateAddress(selectedWithdrawPosition.id, 10)}</p>
-            <p className="section-copy">
-              Coin Type: {selectedWithdrawPosition.coinType ?? 'Unknown'}
-            </p>
-            <form onSubmit={onSubmitWithdraw} className="create-market-form">
-              <label htmlFor="withdraw-amount">Amount to Withdraw</label>
-              <input
-                id="withdraw-amount"
-                type="text"
-                inputMode="decimal"
-                placeholder="0.0"
-                value={withdrawAmount}
-                onChange={(event) => setWithdrawAmount(event.target.value)}
+            <div className="borrow-modal-head">
+              <h3>Withdraw Position</h3>
+              <button
+                type="button"
+                className="borrow-modal-close"
+                aria-label="Close withdraw modal"
+                onClick={() => {
+                  setShowWithdrawModal(false)
+                  setSelectedWithdrawPosition(null)
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="borrow-asset-strip">
+              <img
+                src={selectedWithdrawCoin?.logoUrl ?? '/aquadex-logo.png'}
+                alt={`${selectedWithdrawCoin?.symbol ?? 'coin'} logo`}
+                className="aqualend-asset-logo"
               />
+              <div>
+                <strong>{selectedWithdrawCoin?.symbol ?? shortTypeName(selectedWithdrawCoinType || 'coin')}</strong>
+                <p>{selectedWithdrawCoin?.name ?? 'Unknown Coin'}</p>
+              </div>
+            </div>
+            <form onSubmit={onSubmitWithdraw} className="borrow-modal-form">
+              <label htmlFor="withdraw-amount">Amount</label>
+              <div className="borrow-amount-card">
+                <div className="borrow-amount-meta">
+                  <span>{formatUsdNumber(withdrawAmountUsd)}</span>
+                  <span>
+                    Withdrawable: {withdrawableDisplay} {selectedWithdrawCoin?.symbol ?? ''}
+                  </span>
+                </div>
+                <input
+                  id="withdraw-amount"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={`0.0 ${selectedWithdrawCoin?.symbol ?? ''}`}
+                  value={withdrawAmount}
+                  onChange={(event) => onWithdrawAmountChange(event.target.value)}
+                />
+              </div>
 
-              <label htmlFor="withdraw-price">Price (USD)</label>
-              <input
-                id="withdraw-price"
-                type="number"
-                min={0}
-                step="0.000001"
-                value={withdrawPrice}
-                onChange={(event) => setWithdrawPrice(event.target.value)}
-              />
-              <p className="section-copy">On-chain param: `u64` price scaled by {PRICE_SCALE}.</p>
+              <div className="borrow-slider-wrap">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(withdrawSliderPct)}
+                  onChange={(event) => onWithdrawSliderChange(Number(event.target.value))}
+                  disabled={withdrawableRaw <= 0n}
+                />
+                <div className="borrow-slider-labels">
+                  <span>0%</span>
+                  <span>25%</span>
+                  <span>50%</span>
+                  <span>75%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+
+              <div className="borrow-overview">
+                <h4>Transaction Overview</h4>
+                <div className="borrow-overview-row">
+                  <span>Withdraw Fee</span>
+                  <strong>0.0%</strong>
+                </div>
+                <div className="borrow-overview-row">
+                  <span>Debt</span>
+                  <strong>{formatUsdNumber(toDecimalNumber(selectedWithdrawPosition.borrowedValue, 15))}</strong>
+                </div>
+                <div className="borrow-overview-row">
+                  <span>Health Factor</span>
+                  <strong>{selectedWithdrawPosition.borrowedValue > 0n ? '1.00' : '∞'}</strong>
+                </div>
+              </div>
 
               <div className="modal-actions">
                 <button
@@ -1244,8 +1848,110 @@ export function AquaLendPage() {
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? 'Submitting...' : 'Confirm Withdraw'}
+                <button type="submit" className="btn btn-primary" disabled={submitting || withdrawableRaw <= 0n}>
+                  {submitting ? 'Submitting...' : withdrawAmount.trim() ? 'Confirm Withdraw' : 'Enter An Amount'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {showRepayModal && selectedRepayPosition ? (
+        <div className="modal-overlay" role="presentation" onClick={() => setShowRepayModal(false)}>
+          <div className="create-market-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="borrow-modal-head">
+              <h3>Repay Position</h3>
+              <button
+                type="button"
+                className="borrow-modal-close"
+                aria-label="Close repay modal"
+                onClick={() => {
+                  setShowRepayModal(false)
+                  setSelectedRepayPosition(null)
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="borrow-asset-strip">
+              <img
+                src={selectedRepayCoin?.logoUrl ?? '/aquadex-logo.png'}
+                alt={`${selectedRepayCoin?.symbol ?? 'coin'} logo`}
+                className="aqualend-asset-logo"
+              />
+              <div>
+                <strong>{selectedRepayCoin?.symbol ?? shortTypeName(selectedRepayCoinType || 'coin')}</strong>
+                <p>{selectedRepayCoin?.name ?? 'Unknown Coin'}</p>
+              </div>
+            </div>
+            <form onSubmit={onSubmitRepay} className="borrow-modal-form">
+              <label htmlFor="repay-amount">Amount</label>
+              <div className="borrow-amount-card">
+                <div className="borrow-amount-meta">
+                  <span>{formatUsdNumber(repayAmountUsd)}</span>
+                  <span>
+                    Available: {repayAvailableDisplay} {selectedRepayCoin?.symbol ?? ''}
+                  </span>
+                </div>
+                <input
+                  id="repay-amount"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={`0.0 ${selectedRepayCoin?.symbol ?? ''}`}
+                  value={repayAmount}
+                  onChange={(event) => onRepayAmountChange(event.target.value)}
+                />
+              </div>
+
+              <div className="borrow-slider-wrap">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(repaySliderPct)}
+                  onChange={(event) => onRepaySliderChange(Number(event.target.value))}
+                  disabled={repayAvailableRaw <= 0n}
+                />
+                <div className="borrow-slider-labels">
+                  <span>0%</span>
+                  <span>25%</span>
+                  <span>50%</span>
+                  <span>75%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+
+              <div className="borrow-overview">
+                <h4>Transaction Overview</h4>
+                <div className="borrow-overview-row">
+                  <span>Repay Fee</span>
+                  <strong>0.00%</strong>
+                </div>
+                <div className="borrow-overview-row">
+                  <span>Total Debt</span>
+                  <strong>{formatUsdNumber(toDecimalNumber(selectedRepayPosition.borrowedValue, 15))}</strong>
+                </div>
+                <div className="borrow-overview-row">
+                  <span>Health Factor</span>
+                  <strong>{selectedRepayPosition.borrowedValue > 0n ? '1.00' : '∞'}</strong>
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setShowRepayModal(false)
+                    setSelectedRepayPosition(null)
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting || repayAvailableRaw <= 0n}>
+                  {submitting ? 'Submitting...' : repayAmount.trim() ? 'Confirm Repay' : 'Enter An Amount'}
                 </button>
               </div>
             </form>
